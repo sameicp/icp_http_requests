@@ -21,12 +21,12 @@ actor {
     }
   };
 
-  func get_request(url: Text, method: Types.HttpMethod, headers: [Types.HttpHeader], transform: ?Types.TransformContext): Types.HttpRequestArgs {
+  func get_request(url: Text, method: Types.HttpMethod, headers: [Types.HttpHeader],body: ?[Nat8], transform: ?Types.TransformContext): Types.HttpRequestArgs {
     return {
       url;
       max_response_bytes = null;
       headers;
-      body = null;
+      body;
       method;
       transform;
     }
@@ -64,10 +64,22 @@ actor {
     return actor ("aaaaa-aa");
   };
 
-  func get_response(url: Text, method: Types.HttpMethod): async Types.HttpResponsePayload {
+  func get_header(request_type: Types.HttpMethod): [Types.HttpHeader] {
+    if (request_type == #post) {
+      return [
+        { name = "Host"; value = "jsonplaceholder.typicode.com:443" },
+        { name = "User-Agent"; value = "http_post_sample" },
+        { name= "Content-Type"; value = "application/json; charset=UTF-8" }
+      ];
+    };
+    return [];
+  };
+
+  func get_response(url: Text, method: Types.HttpMethod, body: ?[Nat8]): async Types.HttpResponsePayload {
     let ic: Types.IC = get_ic();
     let transform_context: Types.TransformContext = get_transform();
-    let http_request: Types.HttpRequestArgs = get_request(url, method, [], ?transform_context);
+    let header: [Types.HttpHeader] = get_header(method);
+    let http_request: Types.HttpRequestArgs = get_request(url, method, header, body, ?transform_context);
     Cycles.add(21_000_000_000);
     let http_response: Types.HttpResponsePayload = await ic.http_request(http_request);
     return http_response;
@@ -86,20 +98,48 @@ actor {
       };
       
       case(_) {
-        Debug.trap("Invalid request");
+        Debug.trap("Too bad of a request");
       };
 
     };
   };
 
-  public func get_response_body(url: Text, method: Types.HttpMethod): async Result.Result<Text, Text> {
+  public func get_response_body(url: Text): async Result.Result<Text, Text> {
     try {
-      let http_response: Types.HttpResponsePayload = await get_response(url, method);
+      let method: Types.HttpMethod = #get;
+      let http_response: Types.HttpResponsePayload = await get_response(url, method, ?[]);
       return #ok(await response_body(http_response));
     } catch e {
       return #err(Error.message(e));
     }
+  };
 
+  func create_post(title: Text, body: Text, userId: Nat): [Nat8] {
+    let request_body_json: Text = "{ 
+      \"title\" : \"" # title # "\", 
+      \"body\" : \"" # body # "\", 
+      \"userId\" : \"" # Nat.toText(userId) #"\" 
+    }";
+    let response_body_as_blob: Blob = Text.encodeUtf8(request_body_json);
+    return Blob.toArray(response_body_as_blob);
+  };
+
+  type PostInput = {
+    url: Text;
+    title: Text;
+    body: Text;
+    userId: Nat;
+  };
+
+  public func post_method(post_input: PostInput): async Result.Result<Text, Text> {
+    try {
+      let method: Types.HttpMethod = #post;
+      let request_body_as_nat8: [Nat8] = create_post(post_input.title, post_input.body, post_input.userId); // e.g [34, 34,12, 0]
+      let response: Types.HttpResponsePayload = await get_response(post_input.url, method, ?request_body_as_nat8);
+      return #ok(await response_body(response));
+    } catch e {
+      return #err(Error.message(e));
+    }
   };
 
   public query func transform(raw : Types.TransformArgs) : async Types.CanisterHttpResponsePayload {
